@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Build + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # `npm install`, not yet `npm ci`: this package's lockfile is generated
+      # once @sol-fab/obs is published to npm (a package-lock cannot resolve an
+      # unpublished dependency). Switch to `npm ci` and commit the lock at that
+      # point.
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - run: npm test
+
+  broker:
+    name: Retry/DLQ ownership transfer (real broker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - name: Start Redpanda (test infrastructure)
+        run: |
+          docker run -d --name redpanda -p 9092:9092 \
+            redpandadata/redpanda:v24.2.7 \
+            redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
+              --node-id 0 --check=false \
+              --kafka-addr PLAINTEXT://0.0.0.0:9092 \
+              --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
+      - name: Wait for broker readiness
+        run: |
+          for _ in $(seq 1 30); do
+            if docker exec redpanda rpk cluster info >/dev/null 2>&1; then
+              echo "broker ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Redpanda did not become ready"
+          docker logs redpanda
+          exit 1
+      - name: Broker-backed tests
+        env:
+          KAFKA_BROKERS: localhost:9092
+        run: npm test

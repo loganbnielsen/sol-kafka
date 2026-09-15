@@ -1,0 +1,61 @@
+{
+  "name": "@sol-fab/kafka",
+  "version": "0.1.0",
+  "description": "Sol's Kafka policy layer on top of kafkajs -- schema registry conventions, explicit topic provisioning, the Confluent wire format, decode/retry/crash routing, and W3C traceparent propagation. Not a Kafka client.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loganbnielsen/sol-kafka.git"
+  },
+  "homepage": "https://github.com/loganbnielsen/sol-kafka#readme",
+  "bugs": {
+    "url": "https://github.com/loganbnielsen/sol-kafka/issues"
+  },
+  "keywords": [
+    "sol",
+    "kafka",
+    "kafkajs",
+    "schema-registry",
+    "confluent",
+    "retry",
+    "dlq",
+    "traceparent"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@sol-fab/obs": "^0.1.0"
+  },
+  "peerDependencies": {
+    "kafkajs": "^2.2.4",
+    "@opentelemetry/api": "^1.9.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@types/node": "^22.9.0",
+    "kafkajs": "^2.2.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
