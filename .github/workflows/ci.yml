@@ -17,14 +17,8 @@ jobs:
           # and `npm trust` requires >= 11.15.0; every Node 22 release ships
           # npm 10.9.8.
           node-version: 24
-          # `cache: npm` is deliberately absent until a lockfile is committed:
-          # actions/setup-node fails hard with "Dependencies lock file is not
-          # found" when caching is requested with no lockfile present.
-      # `npm install`, not yet `npm ci`: this package's lockfile is generated
-      # once @sol-fab/obs is published to npm (a package-lock cannot resolve an
-      # unpublished dependency). Restore `cache: npm` and switch to `npm ci`,
-      # committing the lock, at that point.
-      - run: npm install --no-audit --no-fund
+          cache: npm
+      - run: npm ci
       - run: npm run build
       - run: npm test
       - name: Dependency licence gate
@@ -38,9 +32,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          # No `cache: npm` here either -- see the note in the `unit` job:
-          # there is no committed lockfile yet.
-      - run: npm install --no-audit --no-fund
+          cache: npm
+      - run: npm ci
       - run: npm run build
       - name: Start Redpanda (test infrastructure)
         run: |

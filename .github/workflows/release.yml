@@ -35,11 +35,8 @@ jobs:
           # >= 11.5.1; every Node 22 release ships npm 10.9.8.
           node-version: 24
           registry-url: https://registry.npmjs.org
-          # No `cache: npm` until a lockfile is committed -- actions/setup-node
-          # fails hard with "Dependencies lock file is not found" when caching
-          # is requested without one. That is what failed the last two CI runs.
-          # Restore it together with `npm ci` once @sol-fab/obs is published.
-      - run: npm install --no-audit --no-fund
+          cache: npm
+      - run: npm ci
       - run: npm run build
       - run: npm test
       - run: npm publish --access public --provenance
