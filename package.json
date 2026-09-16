@@ -41,6 +41,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepare": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "prepublishOnly": "npm run build"
   },
