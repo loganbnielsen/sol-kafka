@@ -13,12 +13,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          # Node 24 ships npm 11.x. Trusted publishing requires npm >= 11.5.1
+          # and `npm trust` requires >= 11.15.0; every Node 22 release ships
+          # npm 10.9.8.
+          node-version: 24
+          # `cache: npm` is deliberately absent until a lockfile is committed:
+          # actions/setup-node fails hard with "Dependencies lock file is not
+          # found" when caching is requested with no lockfile present.
       # `npm install`, not yet `npm ci`: this package's lockfile is generated
       # once @sol-fab/obs is published to npm (a package-lock cannot resolve an
-      # unpublished dependency). Switch to `npm ci` and commit the lock at that
-      # point.
+      # unpublished dependency). Restore `cache: npm` and switch to `npm ci`,
+      # committing the lock, at that point.
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm test
@@ -32,8 +37,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
+          # No `cache: npm` here either -- see the note in the `unit` job:
+          # there is no committed lockfile yet.
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - name: Start Redpanda (test infrastructure)

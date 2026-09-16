@@ -1,9 +1,19 @@
 name: Release
 
 # Publishing is driven by a version tag (`git tag v0.1.0 && git push --tags`).
-# The npm token lives in the repository secret NPM_TOKEN; provenance is
-# published from GitHub Actions (this repo is public). @sol-fab/obs must
-# already be published at a satisfying version before this can succeed.
+# Provenance is published from GitHub Actions (this repo is public).
+#
+# AUTHENTICATION: v0.1.0 is published with a short-lived bootstrap credential
+# (the NPM_TOKEN repo secret). It is the only release that needs one -- npm
+# trusted publishers can only be attached to a package that already exists on
+# the registry. Once v0.1.0 is live, switch to OIDC:
+#   npm trust github @sol-fab/kafka --file release.yml --allow-publish  # npm >= 11.15.0
+# then DELETE the `env: NODE_AUTH_TOKEN` block below and the repo secret.
+# npm's trusted-publishing guidance is explicit that NODE_AUTH_TOKEN must not
+# be set once OIDC is in use.
+#
+# @sol-fab/obs must already be published at a satisfying version before this
+# can succeed.
 on:
   push:
     tags:
@@ -21,9 +31,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 ships npm 11.x. OIDC trusted publishing requires npm
+          # >= 11.5.1; every Node 22 release ships npm 10.9.8.
+          node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: npm
+          # No `cache: npm` until a lockfile is committed -- actions/setup-node
+          # fails hard with "Dependencies lock file is not found" when caching
+          # is requested without one. That is what failed the last two CI runs.
+          # Restore it together with `npm ci` once @sol-fab/obs is published.
       - run: npm install --no-audit --no-fund
       - run: npm run build
       - run: npm test
