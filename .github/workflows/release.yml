@@ -3,14 +3,19 @@ name: Release
 # Publishing is driven by a version tag (`git tag v0.1.0 && git push --tags`).
 # Provenance is published from GitHub Actions (this repo is public).
 #
-# AUTHENTICATION: v0.1.0 is published with a short-lived bootstrap credential
-# (the NPM_TOKEN repo secret). It is the only release that needs one -- npm
-# trusted publishers can only be attached to a package that already exists on
-# the registry. Once v0.1.0 is live, switch to OIDC:
-#   npm trust github @sol-fab/kafka --file release.yml --allow-publish  # npm >= 11.15.0
-# then DELETE the `env: NODE_AUTH_TOKEN` block below and the repo secret.
-# npm's trusted-publishing guidance is explicit that NODE_AUTH_TOKEN must not
-# be set once OIDC is in use.
+# AUTHENTICATION: OIDC trusted publishing. This repo holds **no npm token** --
+# the workflow exchanges a GitHub Actions OIDC token for a short-lived publish
+# credential, and that same flow produces the provenance statement. The trust
+# relationship is configured per package on npm:
+#   npm trust github @sol-fab/kafka --file release.yml --allow-publish
+#
+# Do NOT reintroduce NODE_AUTH_TOKEN. npm's guidance is explicit that it must not
+# be set when OIDC is in use, and a stray empty token makes npm attempt token
+# auth instead of falling through to OIDC.
+#
+# v0.1.0 was the single exception: it was published with a bootstrap token,
+# because a trusted publisher can only be attached to a package that already
+# exists on the registry.
 #
 # @sol-fab/obs must already be published at a satisfying version before this
 # can succeed.
@@ -40,5 +45,3 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
