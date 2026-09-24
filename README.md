@@ -40,6 +40,15 @@ The consumer side (`Ack`/`Retry`/`Dead_letter` outcome, in-memory vs
 retry-topics strategies) is built on these primitives and has parity with the
 OCaml worker's retry/DLQ semantics.
 
+**Undecodable source records** (`decodeErrorPolicy`, parity with OCaml's
+`decode_error_policy`). Under `retry-topics` the default is `"route-to-dlq"`: a
+record that cannot be decoded is published, raw (value, key, original headers),
+with `X-Sol-Decode-Error` and `X-Sol-Origin-Group`, to `<source>.<group>.dlq`. Its
+offset commits only once that publish lands, and a failed publish throws so it
+stays uncommitted. `"ack-and-drop"` is the explicit opt-in to count it and commit
+past it. `in-memory` has no DLQ, so it only allows `"ack-and-drop"` (its default),
+and asking it for `"route-to-dlq"` is a construction error.
+
 ## Usage
 
 ```ts
