@@ -24,7 +24,8 @@ import type { Outcome } from "./outcome.js";
 /** The record as received: raw bytes/headers, for re-routing. */
 export interface RawRecord {
   readonly key?: Buffer;
-  readonly value: Buffer;
+  /** `null` is a tombstone and is forwarded as one, never as an empty value. */
+  readonly value: Buffer | null;
   readonly headers: SolHeaders;
 }
 
@@ -32,7 +33,8 @@ export interface RawRecord {
 export interface RelayRecord {
   readonly topic: string;
   readonly key?: Buffer;
-  readonly value: Buffer;
+  /** `null` publishes a tombstone, as OCaml's `~value:None` does. */
+  readonly value: Buffer | null;
   readonly headers: SolHeaders;
 }
 

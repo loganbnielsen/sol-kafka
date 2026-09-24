@@ -1,6 +1,6 @@
 {
   "name": "@sol-fab/kafka",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sol's Kafka policy layer on top of kafkajs -- schema registry conventions, explicit topic provisioning, the Confluent wire format, decode/retry/crash routing, and W3C traceparent propagation. Not a Kafka client.",
   "license": "Apache-2.0",
   "type": "module",

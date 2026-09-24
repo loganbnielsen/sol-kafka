@@ -21,6 +21,8 @@ import type { DecodeErrorCounter, MessageHandlerContext } from "./consume.js";
 import type { Outcome } from "./outcome.js";
 import {
   backoffS,
+  relayTopicName,
+  retryDecodeFailureHeaders,
   retryTopicsPolicyError,
   solHeadersOf,
   type RetryStrategy,
@@ -32,10 +34,22 @@ import { routeOutcome, type RawRecord, type RetryRelay, type RetryMetrics } from
 // reaching into routing.ts directly.
 export type { RelayRecord, RetryRelay, RetryMetrics } from "./routing.js";
 
+/**
+ * What happens to a source record that cannot be decoded (FEAT-098, mirroring
+ * OCaml's `decode_error_policy`, BUG-051). `route-to-dlq` publishes the raw
+ * record, with the decode diagnostic, to `<source>.<group>.dlq` and lets the
+ * offset commit only once that publish lands. `ack-and-drop` counts it and
+ * commits past it. `retry-topics` defaults to `route-to-dlq`; `in-memory` has no
+ * DLQ, so it only allows `ack-and-drop` (its default).
+ */
+export type DecodeErrorPolicy = "route-to-dlq" | "ack-and-drop";
+
 export interface RetryableMessageOptions<T> {
   decode: (json: unknown) => T;
   decodeErrorCounter: DecodeErrorCounter;
   onDecodeError?: (err: unknown) => void;
+  /** Defaults to `route-to-dlq` under `retry-topics`, `ack-and-drop` under `in-memory`. */
+  decodeErrorPolicy?: DecodeErrorPolicy;
   retryStrategy: RetryStrategy;
   /** The consumer group id; retry/DLQ topics are scoped to it (BUG-030). */
   groupId: string;
@@ -54,8 +68,20 @@ export interface RetryableMessageOptions<T> {
 const defaultSleep = (seconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, Math.max(0, seconds) * 1000));
 
-function assertStrategyUsable(opts: { retryStrategy: RetryStrategy; relay?: RetryRelay }): void {
-  if (opts.retryStrategy.kind !== "retry-topics") return;
+function assertStrategyUsable(opts: {
+  retryStrategy: RetryStrategy;
+  relay?: RetryRelay;
+  decodeErrorPolicy?: DecodeErrorPolicy;
+}): void {
+  if (opts.retryStrategy.kind !== "retry-topics") {
+    if (opts.decodeErrorPolicy === "route-to-dlq") {
+      throw new Error(
+        "sol-kafka: decodeErrorPolicy route-to-dlq needs a DLQ, which only retry-topics " +
+          "provisions; use retry-topics, or state ack-and-drop for in-memory",
+      );
+    }
+    return;
+  }
   const err = retryTopicsPolicyError(opts.retryStrategy.policy);
   if (err) throw new Error(`sol-kafka: ${err}`);
   if (!opts.relay) {
@@ -75,6 +101,9 @@ export function wrapEachRetryableMessage<T>(opts: RetryableMessageOptions<T>) {
   const sleep = opts.sleep ?? defaultSleep;
   const nowS = opts.nowS ?? (() => Date.now() / 1000);
   const policy = opts.retryStrategy.policy;
+  const decodeErrorPolicy: DecodeErrorPolicy =
+    opts.decodeErrorPolicy ??
+    (opts.retryStrategy.kind === "retry-topics" ? "route-to-dlq" : "ack-and-drop");
 
   return async ({ message }: EachMessagePayload): Promise<void> => {
     let decoded: T;
@@ -84,7 +113,31 @@ export function wrapEachRetryableMessage<T>(opts: RetryableMessageOptions<T>) {
     } catch (err) {
       opts.decodeErrorCounter.inc();
       opts.onDecodeError?.(err);
-      return; // reject: never retried, never reaches the handler
+      if (decodeErrorPolicy === "ack-and-drop") return; // counted, committed past
+      // route-to-dlq (FEAT-098 / BUG-051): the raw record goes to the DLQ with the
+      // diagnostic, and the offset commits only once that publish lands; a failed
+      // publish throws so it stays uncommitted. Never retried, never handled.
+      const relay = opts.relay;
+      if (!relay) throw new Error("sol-kafka: route-to-dlq without a relay; not acking");
+      try {
+        await relay.publish({
+          topic: relayTopicName(opts.sourceTopic, opts.groupId, "dlq"),
+          key: message.key ?? undefined,
+          value: message.value, // a tombstone stays a tombstone (null)
+          headers: retryDecodeFailureHeaders({
+            originalHeaders: solHeadersOf(message.headers),
+            decodeError: String(err),
+            groupId: opts.groupId,
+          }),
+        });
+      } catch (publishErr) {
+        opts.metrics?.onRelayPublish?.({ attempt: 1, outcome: "failed" });
+        throw new Error(
+          `sol-kafka: could not dead-letter an undecodable record; not acking (${String(publishErr)})`,
+        );
+      }
+      opts.metrics?.onRelayPublish?.({ attempt: 1, outcome: "published" });
+      return;
     }
 
     const raw: RawRecord = {

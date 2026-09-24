@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import type { EachMessagePayload } from "kafkajs";
 import { wrapEachRetryableMessage, type RelayRecord, type RetryRelay } from "../src/retryable.js";
 import { ACK, deadLetter, retry } from "../src/outcome.js";
-import { HDR_ATTEMPT, HDR_ORIGIN_GROUP, HDR_RETRY_AT, type RetryStrategy } from "../src/retry.js";
+import {
+  HDR_ATTEMPT,
+  HDR_DECODE_ERROR,
+  HDR_ORIGIN_GROUP,
+  HDR_RETRY_AT,
+  type RetryStrategy,
+} from "../src/retry.js";
 import { encodeWire } from "../src/wireFormat.js";
 
 // FEAT-081: the routing/record-shape behaviour of the retry-capable wrapper,
@@ -141,7 +147,7 @@ test("retry-topics: construction fails without a relay or with maxAttempts < 1",
   );
 });
 
-test("decode failure increments the counter, never runs the handler, never publishes", async () => {
+test("ack-and-drop: decode failure increments the counter, never runs the handler, never publishes", async () => {
   const { relay, records } = collector();
   const errors = counter();
   let handlerCalled = false;
@@ -150,6 +156,7 @@ test("decode failure increments the counter, never runs the handler, never publi
       throw new Error("bad shape");
     },
     decodeErrorCounter: errors,
+    decodeErrorPolicy: "ack-and-drop",
     retryStrategy: retryTopics(),
     groupId: "g",
     sourceTopic: "t",
@@ -230,4 +237,139 @@ test("retry-topics: retry/relay metrics are reported", async () => {
   await wrapped(payload(encodeWire(1, { x: 1 })));
   assert.deepEqual(scheduled, [{ attempt: 1, delayS: 1 }]);
   assert.deepEqual(published, ["published"]);
+});
+
+// FEAT-098: under retry-topics a source record that cannot be decoded goes, raw,
+// to the group-scoped DLQ with the decode diagnostic -- parity with OCaml's
+// Route_to_dlq (BUG-051). The offset commits only once that publish lands.
+const decodeFails = () => {
+  throw new Error("bad shape");
+};
+
+test("retry-topics default: an undecodable record is published raw to the DLQ before commit", async () => {
+  const { relay, records } = collector();
+  const errors = counter();
+  let handlerCalled = false;
+  const value = encodeWire(1, { x: 1 });
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeFails,
+    decodeErrorCounter: errors,
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay,
+    handler: async () => {
+      handlerCalled = true;
+      return ACK;
+    },
+  });
+
+  await wrapped({
+    message: { value, headers: { traceparent: Buffer.from("tp") }, key: Buffer.from("k") },
+  } as unknown as EachMessagePayload);
+  assert.equal(errors.value, 1);
+  assert.equal(handlerCalled, false);
+  assert.equal(records.length, 1);
+  const [record] = records;
+  assert.equal(record.topic, "t.g.dlq");
+  assert.deepEqual(record.value, value);
+  assert.deepEqual(record.key, Buffer.from("k"));
+  assert.match(record.headers[HDR_DECODE_ERROR] ?? "", /bad shape/);
+  assert.equal(record.headers[HDR_ORIGIN_GROUP], "g");
+  assert.equal(record.headers.traceparent, "tp", "original headers are preserved");
+  assert.equal(record.headers[HDR_ATTEMPT], undefined, "not another scheduled attempt");
+});
+
+test("retry-topics: a failed DLQ publish rejects, so the offset stays uncommitted", async () => {
+  const outcomes: string[] = [];
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeFails,
+    decodeErrorCounter: counter(),
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay: {
+      publish: async () => {
+        throw new Error("broker down");
+      },
+    },
+    metrics: { onRelayPublish: ({ outcome }) => outcomes.push(outcome) },
+    handler: async () => ACK,
+  });
+  await assert.rejects(wrapped(payload(encodeWire(1, { x: 1 }))), /not acking/);
+  assert.deepEqual(outcomes, ["failed"]);
+});
+
+test("in-memory: route-to-dlq is a construction error; the default drops", async () => {
+  assert.throws(
+    () =>
+      wrapEachRetryableMessage({
+        decode: decodeFails,
+        decodeErrorCounter: counter(),
+        decodeErrorPolicy: "route-to-dlq",
+        retryStrategy: inMemory(),
+        groupId: "g",
+        sourceTopic: "t",
+        handler: async () => ACK,
+      }),
+    /route-to-dlq needs a DLQ/,
+  );
+  const errors = counter();
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeFails,
+    decodeErrorCounter: errors,
+    retryStrategy: inMemory(),
+    groupId: "g",
+    sourceTopic: "t",
+    handler: async () => ACK,
+  });
+  await wrapped(payload(encodeWire(1, { x: 1 })));
+  assert.equal(errors.value, 1);
+});
+
+test("retry-topics: a source tombstone is dead-lettered as a tombstone, not an empty value", async () => {
+  const { relay, records } = collector();
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeOk,
+    decodeErrorCounter: counter(),
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay,
+    handler: async () => ACK,
+  });
+  await wrapped({
+    message: { value: null, headers: {}, key: Buffer.from("k") },
+  } as unknown as EachMessagePayload);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].value, null);
+  assert.match(records[0].headers[HDR_DECODE_ERROR] ?? "", /tombstone/);
+});
+
+test("retry-topics: a redriven record's stale diagnostic headers are replaced by the fresh ones", async () => {
+  const { relay, records } = collector();
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeFails,
+    decodeErrorCounter: counter(),
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay,
+    handler: async () => ACK,
+  });
+  await wrapped({
+    message: {
+      value: encodeWire(1, { x: 1 }),
+      headers: {
+        [HDR_DECODE_ERROR]: Buffer.from("old error"),
+        [HDR_ORIGIN_GROUP]: Buffer.from("old-group"),
+        keep: Buffer.from("me"),
+      },
+      key: Buffer.from("k"),
+    },
+  } as unknown as EachMessagePayload);
+  const [record] = records;
+  assert.match(record.headers[HDR_DECODE_ERROR] ?? "", /bad shape/);
+  assert.equal(record.headers[HDR_ORIGIN_GROUP], "g");
+  assert.equal(record.headers.keep, "me");
 });

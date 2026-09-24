@@ -211,20 +211,23 @@ export function deadLetterHeaders(
 }
 
 /**
- * `retry_decode_failure_message`: a retry record that couldn't even be
- * decoded. Its original headers are preserved *untouched* (it is not another
- * scheduled attempt), and the decode diagnostic plus origin group are
- * prepended.
+ * `decode_failure_message`: a record (source or retry) that couldn't be
+ * decoded. Its original headers are preserved (it is not another scheduled
+ * attempt), and the decode diagnostic plus origin group are set, replacing any
+ * stale copies of those two headers.
  */
 export function retryDecodeFailureHeaders(opts: {
   readonly originalHeaders?: SolHeaders;
   readonly decodeError: string;
   readonly groupId: string;
 }): SolHeaders {
+  // The fresh diagnostic wins over any copy already on the record (a redriven
+  // DLQ record that fails again): OCaml sends its new pairs first and reads the
+  // first match, so the current error and group are what it reports.
   return {
+    ...(opts.originalHeaders ?? {}),
     [HDR_DECODE_ERROR]: opts.decodeError,
     [HDR_ORIGIN_GROUP]: opts.groupId,
-    ...(opts.originalHeaders ?? {}),
   };
 }
 
