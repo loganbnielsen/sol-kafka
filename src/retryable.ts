@@ -123,7 +123,7 @@ export function wrapEachRetryableMessage<T>(opts: RetryableMessageOptions<T>) {
         await relay.publish({
           topic: relayTopicName(opts.sourceTopic, opts.groupId, "dlq"),
           key: message.key ?? undefined,
-          value: message.value ?? Buffer.alloc(0),
+          value: message.value, // a tombstone stays a tombstone (null)
           headers: retryDecodeFailureHeaders({
             originalHeaders: solHeadersOf(message.headers),
             decodeError: String(err),

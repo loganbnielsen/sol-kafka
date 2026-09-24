@@ -326,3 +326,50 @@ test("in-memory: route-to-dlq is a construction error; the default drops", async
   await wrapped(payload(encodeWire(1, { x: 1 })));
   assert.equal(errors.value, 1);
 });
+
+test("retry-topics: a source tombstone is dead-lettered as a tombstone, not an empty value", async () => {
+  const { relay, records } = collector();
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeOk,
+    decodeErrorCounter: counter(),
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay,
+    handler: async () => ACK,
+  });
+  await wrapped({
+    message: { value: null, headers: {}, key: Buffer.from("k") },
+  } as unknown as EachMessagePayload);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].value, null);
+  assert.match(records[0].headers[HDR_DECODE_ERROR] ?? "", /tombstone/);
+});
+
+test("retry-topics: a redriven record's stale diagnostic headers are replaced by the fresh ones", async () => {
+  const { relay, records } = collector();
+  const wrapped = wrapEachRetryableMessage({
+    decode: decodeFails,
+    decodeErrorCounter: counter(),
+    retryStrategy: retryTopics(),
+    groupId: "g",
+    sourceTopic: "t",
+    relay,
+    handler: async () => ACK,
+  });
+  await wrapped({
+    message: {
+      value: encodeWire(1, { x: 1 }),
+      headers: {
+        [HDR_DECODE_ERROR]: Buffer.from("old error"),
+        [HDR_ORIGIN_GROUP]: Buffer.from("old-group"),
+        keep: Buffer.from("me"),
+      },
+      key: Buffer.from("k"),
+    },
+  } as unknown as EachMessagePayload);
+  const [record] = records;
+  assert.match(record.headers[HDR_DECODE_ERROR] ?? "", /bad shape/);
+  assert.equal(record.headers[HDR_ORIGIN_GROUP], "g");
+  assert.equal(record.headers.keep, "me");
+});

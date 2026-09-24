@@ -118,7 +118,7 @@ export async function handleRetryRecord<T>(
 
   const raw: RawRecord = {
     key: message.key ?? undefined,
-    value: message.value ?? Buffer.alloc(0),
+    value: message.value,
     headers: solHeadersOf(message.headers),
   };
   const attempt = parseAttemptHeader(raw.headers);
