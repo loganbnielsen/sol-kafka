@@ -25,7 +25,7 @@ jobs:
         run: npx --yes license-checker --production --onlyAllow "MIT;Apache-2.0"
 
   broker:
-    name: Retry/DLQ ownership transfer (real broker)
+    name: Broker-backed integration (retry/DLQ + partitioning)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,17 +37,19 @@ jobs:
       - run: npm run build
       - name: Start Redpanda (test infrastructure)
         run: |
-          docker run -d --name redpanda -p 9092:9092 \
+          docker run -d --name redpanda -p 9092:9092 -p 8081:8081 \
             redpandadata/redpanda:v24.2.7 \
             redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
               --node-id 0 --check=false \
               --kafka-addr PLAINTEXT://0.0.0.0:9092 \
-              --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092
-      - name: Wait for broker readiness
+              --advertise-kafka-addr PLAINTEXT://127.0.0.1:9092 \
+              --schema-registry-addr 0.0.0.0:8081
+      - name: Wait for broker and schema registry readiness
         run: |
           for _ in $(seq 1 30); do
-            if docker exec redpanda rpk cluster info >/dev/null 2>&1; then
-              echo "broker ready"
+            if docker exec redpanda rpk cluster info >/dev/null 2>&1 \
+              && curl -fsS http://localhost:8081/subjects >/dev/null 2>&1; then
+              echo "broker and schema registry ready"
               exit 0
             fi
             sleep 2
@@ -58,4 +60,5 @@ jobs:
       - name: Broker-backed tests
         env:
           KAFKA_BROKERS: localhost:9092
+          SCHEMA_REGISTRY_URL: http://localhost:8081
         run: npm test

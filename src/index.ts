@@ -1,7 +1,12 @@
 export { encodeWire, decodeWire, WireFormatError } from "./wireFormat.js";
 export { registerSchema, setSubjectCompatibility, checkCompatibility } from "./schemaRegistry.js";
+export type { TopicShape, TopicContract, RegisteredTopic } from "./contract.js";
+export { describeTopic } from "./admin.js";
+export type { ObservedTopic } from "./admin.js";
 export { registerTopic } from "./register.js";
-export type { RegisterTopicOptions, RegisteredTopic } from "./register.js";
+export type { RegisterTopicOptions } from "./register.js";
+export { publish } from "./publish.js";
+export type { PublishOptions } from "./publish.js";
 export { wrapEachMessage, wireCrashListener } from "./consume.js";
 export type { DecodeErrorCounter, MessageHandlerContext } from "./consume.js";
 export { traceparentOf, extractTraceparent } from "@sol-fab/obs";

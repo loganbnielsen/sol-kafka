@@ -60,7 +60,7 @@ it("integration: Retry forwards to the retry topic, the relay re-runs the handle
   const groupId = `sol-int-group-${s}`;
   const kafka = new Kafka({ clientId: `sol-int-${s}`, brokers: BROKERS });
   await makeTopic(kafka, sourceTopic);
-  await provisionRelayTopics({ kafka, sourceTopic, groupId });
+  await provisionRelayTopics({ kafka, source: { name: sourceTopic, partitions: 1 }, groupId });
 
   const producer = kafka.producer();
   await producer.connect();
@@ -114,7 +114,7 @@ it("integration: Dead_letter reaches <source>.<group>.dlq carrying X-Sol-Origin-
   const groupId = `sol-int-group-${s}`;
   const kafka = new Kafka({ clientId: `sol-int-${s}`, brokers: BROKERS });
   await makeTopic(kafka, sourceTopic);
-  await provisionRelayTopics({ kafka, sourceTopic, groupId });
+  await provisionRelayTopics({ kafka, source: { name: sourceTopic, partitions: 1 }, groupId });
 
   const producer = kafka.producer();
   await producer.connect();
@@ -153,7 +153,7 @@ it("integration: an undecodable retry record is transferred to the DLQ before be
   const groupId = `sol-int-group-${s}`;
   const kafka = new Kafka({ clientId: `sol-int-${s}`, brokers: BROKERS });
   await makeTopic(kafka, sourceTopic);
-  await provisionRelayTopics({ kafka, sourceTopic, groupId });
+  await provisionRelayTopics({ kafka, source: { name: sourceTopic, partitions: 1 }, groupId });
 
   const producer = kafka.producer();
   await producer.connect();

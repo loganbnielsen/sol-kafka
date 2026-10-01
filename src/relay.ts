@@ -17,6 +17,8 @@ import type { Consumer, IHeaders, Kafka, Producer } from "kafkajs";
 import type { SpanContext } from "@opentelemetry/api";
 import { extractTraceparent } from "@sol-fab/obs";
 import { decodeWire } from "./wireFormat.js";
+import { assertDeclaredPartitions, type TopicShape } from "./contract.js";
+import { describeTopic } from "./admin.js";
 import { deadLetter, type Outcome } from "./outcome.js";
 import {
   parseAttemptHeader,
@@ -32,24 +34,39 @@ import { routeOutcome, type RawRecord, type RetryRelay, type RetryMetrics } from
 
 export interface ProvisionRelayTopicsOptions {
   kafka: Kafka;
-  sourceTopic: string;
+  /**
+   * The source topic's declared shape. A `TopicContract` satisfies this
+   * structurally, so the same declaration that a producer registered with is
+   * what a consumer hands here.
+   */
+  source: TopicShape;
   groupId: string;
-  partitions?: number;
   replicationFactor?: number;
 }
 
 /**
- * Create `<source>.<canonical-group>.retry` and `.dlq`. Retry/DLQ records are
- * the source record's raw bytes, so no schema is registered for them —
- * `Kafka_service_retry_topics.consume` only calls `ensure_topic` here too.
+ * Create `<source>.<canonical-group>.retry` and `.dlq`.
+ *
+ * The relay topics inherit the source's partition count, so a record's key
+ * keeps working after it is transferred: the same entity lands on the same
+ * partition of the retry topic as it did on the source (BUG-099). The live
+ * source topic is consulted first — a TypeScript worker can therefore inherit
+ * the count from a topic an OCaml service created, rather than having to
+ * restate it — and the declaration is the fallback for the startup race where
+ * the worker provisions its relay topics before the producer has created the
+ * source. Retry/DLQ records are the source record's raw bytes, so no schema is
+ * registered for them — `Kafka_service_retry_topics.consume` only calls
+ * `ensure_topic` here too.
  */
 export async function provisionRelayTopics(
   opts: ProvisionRelayTopicsOptions,
 ): Promise<{ retryTopic: string; dlqTopic: string }> {
-  const retryTopic = relayTopicName(opts.sourceTopic, opts.groupId, "retry");
-  const dlqTopic = relayTopicName(opts.sourceTopic, opts.groupId, "dlq");
-  const partitions = opts.partitions ?? 1;
-  const replicationFactor = opts.replicationFactor ?? 1;
+  const retryTopic = relayTopicName(opts.source.name, opts.groupId, "retry");
+  const dlqTopic = relayTopicName(opts.source.name, opts.groupId, "dlq");
+  assertDeclaredPartitions(opts.source);
+  const observed = await describeTopic(opts.kafka, opts.source.name);
+  const partitions = observed?.partitions ?? opts.source.partitions;
+  const replicationFactor = opts.replicationFactor ?? observed?.replicationFactor ?? 1;
   const admin = opts.kafka.admin();
   await admin.connect();
   try {

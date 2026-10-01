@@ -1,7 +1,7 @@
 {
   "name": "@sol-fab/kafka",
-  "version": "0.2.0",
-  "description": "Sol's Kafka policy layer on top of kafkajs -- schema registry conventions, explicit topic provisioning, the Confluent wire format, decode/retry/crash routing, and W3C traceparent propagation. Not a Kafka client.",
+  "version": "0.3.0",
+  "description": "Sol's Kafka policy layer on top of kafkajs -- declared partitioning and record keys, schema registry conventions, explicit topic provisioning, the Confluent wire format, decode/retry/crash routing, and W3C traceparent propagation. Not a Kafka client.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
