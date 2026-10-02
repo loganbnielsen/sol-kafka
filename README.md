@@ -83,10 +83,12 @@ and asking it for `"route-to-dlq"` is a construction error.
 
 ```ts
 import { Kafka } from "kafkajs";
-import { registerTopic, publish, wrapEachMessage, wireCrashListener, traceparentOf } from "@sol-fab/kafka";
+import { kafkaConfigFromEnv, registerTopic, publish, wrapEachMessage, wireCrashListener, traceparentOf } from "@sol-fab/kafka";
 import type { TopicContract } from "@sol-fab/kafka";
 
-const kafka = new Kafka({ clientId: "order-svc", brokers: ["localhost:9092"] });
+// Reads KAFKA_BROKERS and KAFKA_SECURITY_PROTOCOL (required) plus the TLS/SASL
+// variables; throws naming a missing or malformed one.
+const kafka = new Kafka({ clientId: "order-svc", ...kafkaConfigFromEnv() });
 
 const orders: TopicContract<OrderPlaced> = {
   name: "orders",
@@ -111,6 +113,25 @@ await consumer.run({
 });
 wireCrashListener(consumer);
 ```
+
+## Kafka security posture
+
+`kafkaConfigFromEnv()` is the one place a TypeScript application reads the
+transport posture, mirroring the OCaml `Kafka_service.config_of_env` (SEC-007):
+
+- `KAFKA_SECURITY_PROTOCOL` is **required** — `plaintext`, `ssl`,
+  `sasl_plaintext` or `sasl_ssl`. Absent or blank is an error, never a
+  plaintext default.
+- `KAFKA_BROKERS` is required.
+- `KAFKA_SSL_CA_LOCATION` (optional, for the two TLS protocols) is read and
+  passed as the kafkajs `ca`; an unreadable file fails closed.
+- `KAFKA_SASL_MECHANISM` / `KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD` are
+  required for the two SASL protocols (`PLAIN`, `SCRAM-SHA-256`,
+  `SCRAM-SHA-512`).
+
+Every error names the variable it is about. Sol renders
+`KAFKA_SECURITY_PROTOCOL` into every workload's manifest; a local process sets
+`KAFKA_SECURITY_PROTOCOL=plaintext`.
 
 ## Development
 
