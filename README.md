@@ -58,8 +58,9 @@ OCaml worker side exactly rather than approximating it:
   (exponential, symmetric jitter applied before the `maxDelayS` clamp; an
   injectable RNG for deterministic tests).
 - `relayTopicName` / `canonicalGroupSegment` — `<source>.<canonical-group>.retry|dlq`,
-  the group-scoping rule (sanitize to `[a-zA-Z0-9-]`, truncate + MD5 suffix
-  past 64 chars).
+  the group-scoping rule (sanitize to `[a-zA-Z0-9-]`, truncate the readable
+  prefix past 51 chars, and always append the 12-hex MD5 of the original group
+  id).
 - `retryRecordHeaders` / `deadLetterHeaders` / `retryDecodeFailureHeaders` —
   the `X-Sol-Attempt` / `X-Sol-Retry-At` / `X-Sol-Decode-Error` /
   `X-Sol-Origin-Group` conventions.

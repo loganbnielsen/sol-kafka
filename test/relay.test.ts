@@ -59,7 +59,7 @@ test("relay: an undecodable retry record is transferred to the DLQ with the diag
   );
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.g.dlq");
+  assert.equal(records[0].topic, "orders.g-b2f5ff474366.dlq");
   assert.match(records[0].headers[HDR_DECODE_ERROR], /bad json/);
   assert.equal(records[0].headers[HDR_ORIGIN_GROUP], "g");
   assert.equal(records[0].headers[HDR_ATTEMPT], "1", "original headers are preserved untouched");
@@ -82,7 +82,7 @@ test("relay: malformed retry metadata dead-letters at the terminal attempt (no r
   await handleRetryRecord(opts({ relay }), record({}));
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.g.dlq");
+  assert.equal(records[0].topic, "orders.g-b2f5ff474366.dlq");
   assert.equal(records[0].headers[HDR_ATTEMPT], "3"); // max(1, maxAttempts)
   assert.equal(records[0].headers[HDR_ORIGIN_GROUP], "g");
 });
@@ -95,7 +95,7 @@ test("relay: Retry forwards to the retry topic with the incremented attempt and 
   );
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.g.retry");
+  assert.equal(records[0].topic, "orders.g-b2f5ff474366.retry");
   assert.equal(records[0].headers[HDR_ATTEMPT], "2");
   assert.equal(records[0].headers[HDR_RETRY_AT], "1002"); // now + backoff(attempt 2) = 2s
 });
@@ -108,7 +108,7 @@ test("relay: Retry at the attempt budget dead-letters instead of rescheduling", 
   );
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.g.dlq");
+  assert.equal(records[0].topic, "orders.g-b2f5ff474366.dlq");
   assert.equal(records[0].headers[HDR_ATTEMPT], "4");
 });
 
@@ -120,7 +120,7 @@ test("relay: Dead_letter goes to the DLQ at the current attempt", async () => {
   );
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.g.dlq");
+  assert.equal(records[0].topic, "orders.g-b2f5ff474366.dlq");
   assert.equal(records[0].headers[HDR_ATTEMPT], "2");
 });
 

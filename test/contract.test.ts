@@ -64,8 +64,8 @@ test("provisionRelayTopics: the relay topics inherit the source topic's live par
     source: { name: "orders", partitions: 3 },
   });
 
-  assert.equal(retryTopic, "orders.g.retry");
-  assert.equal(dlqTopic, "orders.g.dlq");
+  assert.equal(retryTopic, "orders.g-b2f5ff474366.retry");
+  assert.equal(dlqTopic, "orders.g-b2f5ff474366.dlq");
   assert.deepEqual(
     created.map((t) => t.numPartitions),
     [6, 6],
