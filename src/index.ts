@@ -1,4 +1,10 @@
 export { encodeWire, decodeWire, WireFormatError } from "./wireFormat.js";
+export { kafkaConfigFromEnv } from "./config.js";
+export type {
+  KafkaClientEnv,
+  KafkaSaslMechanism,
+  KafkaSecurityProtocol,
+} from "./config.js";
 export { registerSchema, setSubjectCompatibility, checkCompatibility } from "./schemaRegistry.js";
 export type { TopicShape, TopicContract, RegisteredTopic } from "./contract.js";
 export { describeTopic } from "./admin.js";
