@@ -85,6 +85,21 @@ export async function registerSchema(
  * of the runtime registration path -- exported for the same purpose here,
  * not called by registerTopic().
  */
+/**
+ * `kafka_service_schema.ml`'s `is_subject_not_found`: only the registry's two
+ * "no such subject/version" error codes mean "nothing registered yet". Any
+ * other 404 is a misconfigured base URL, not an empty registry, and treating it
+ * as compatible would silently admit an unregistered contract.
+ */
+export function isSubjectNotFound(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body) as { error_code?: number };
+    return parsed.error_code === 40401 || parsed.error_code === 40402;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkCompatibility(
   registryUrl: string,
   topicName: string,
@@ -97,8 +112,44 @@ export async function checkCompatibility(
     `/compatibility/subjects/${subject}/versions/latest`,
     { schemaType: "JSON", schema }
   );
-  if (status === 404) return { compatible: true }; // no prior version registered yet
-  if (status !== 200) throw new Error(`schema registry: HTTP ${status}: ${body}`);
+  if (status === 404 && isSubjectNotFound(body)) return { compatible: true };
+  if (status !== 200) {
+    throw new Error(
+      status === 404
+        ? `schema registry HTTP 404 that is not 'subject not found' (is ${registryUrl} the registry's base URL?): ${body}`
+        : `schema registry: HTTP ${status}: ${body}`
+    );
+  }
   const parsed = JSON.parse(body) as { is_compatible: boolean };
   return { compatible: parsed.is_compatible };
+}
+
+/**
+ * `kafka_service_schema.ml`'s `lookup_schema`: resolve the id of the registered
+ * schema that matches the declared contract, WITHOUT registering anything. The
+ * registry answers `POST /subjects/{subject}` with the id of a matching version,
+ * or 404 when no registered version matches the declaration. This is the
+ * read-only half of a producer's startup: the deploy step registered the
+ * schema, the runtime only resolves it.
+ */
+export async function lookupSchema(
+  registryUrl: string,
+  topicName: string,
+  schema: string
+): Promise<number> {
+  const subject = `${topicName}-value`;
+  const { status, body } = await registryRequest(registryUrl, "POST", `/subjects/${subject}`, {
+    schemaType: "JSON",
+    schema,
+  });
+  if (status === 200) {
+    const parsed = JSON.parse(body) as { id: number };
+    return parsed.id;
+  }
+  if (status === 404) {
+    throw new Error(
+      `subject '${subject}' has no registered schema matching the declared contract`
+    );
+  }
+  throw new Error(`schema registry HTTP ${status}: ${body}`);
 }

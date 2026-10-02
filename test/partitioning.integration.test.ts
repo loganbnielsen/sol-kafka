@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Kafka, type Consumer } from "kafkajs";
-import { registerTopic } from "../src/register.js";
+import { connectTopic, registerContract } from "../src/register.js";
 import { publish } from "../src/publish.js";
 import { provisionDlqTopic } from "../src/dlq.js";
 import { describeTopic } from "../src/admin.js";
@@ -70,7 +70,10 @@ it("integration: a declared multi-partition topic keeps same-key records ordered
     key: (m) => m.ordering_key,
   };
 
-  const topic = await registerTopic({ kafka, registryUrl: REGISTRY as string, contract });
+  // The deployment step registers the contract; the runtime resolves it
+  // read-only. This split is exactly the BUG-105 contract.
+  await registerContract({ registryUrl: REGISTRY as string, contract });
+  const topic = await connectTopic({ kafka, registryUrl: REGISTRY as string, contract });
 
   // The broker got the declared count, not a default.
   const live = await describeTopic(kafka, topicName);

@@ -8,12 +8,13 @@ npm install @sol-fab/kafka kafkajs
 
 Encodes six conventions that a hand-rolled TypeScript port of Sol's `local-demo` got wrong at least once each, evidenced by two independent adversarial review rounds:
 
-1. **Declared partitioning and record keys** (`TopicContract`/`registerTopic`/`publish`) — an event contract declares the topic's partition count and how each message is keyed, the topic is created at that count and never reduced, and every published record is keyed by the declaration. Matches Sol's OCaml `Kafka_service.MESSAGE.partitions`/`MESSAGE.key`. See *Declared partitioning and keys* below.
-2. **Schema registration ordering/fatality** (`registerTopic`) — register the schema first (fatal on failure), then set subject compatibility second (non-fatal, logged as a warning). Matches Sol's OCaml `kafka_service.ml` `register` exactly.
-3. **Explicit topic provisioning** (`registerTopic`) — provisions the topic via `admin().createTopics()` *before* touching the schema registry, rather than relying on broker auto-create (invisible in local dev, fails hard in production with `auto.create.topics.enable=false`).
-4. **Confluent wire format** (`encodeWire`/`decodeWire`) — the 5-byte header (magic byte + big-endian schema ID), byte-for-byte compatible with Sol's OCaml `Confluent_wire`.
-5. **The `Ack | Fail` outcome and the decode DLQ** (`wrapEachMessage`/`wireCrashListener`) — a decode/validation failure is a rejection: counted, routed raw to the group DLQ, and committed once that publish lands. A handler `Fail` is fail-stop: the offset stays uncommitted and the consumer stops, mirroring `worker.ml`'s `| Fail -> ... Kafka.Consumer.Stop`. Matches FEAT-113, which deleted Kafka message-level retry from the OCaml framework.
-6. **W3C `traceparent` propagation** (`traceparentOf`/`extractTraceparent`) — OpenTelemetry has no official Kafka carrier, so this glue has to exist somewhere; correctly preserves an unsampled trace's flags byte (`0`) instead of coercing it to "sampled" via JS falsy-zero coercion.
+1. **Declared partitioning and record keys** (`TopicContract`/`connectTopic`/`publish`) — an event contract declares the topic's partition count and how each message is keyed, the topic is created at that count and never reduced, and every published record is keyed by the declaration. Matches Sol's OCaml `Kafka_service.MESSAGE.partitions`/`MESSAGE.key`. See *Declared partitioning and keys* below.
+2. **A read-only runtime and a deployment-owned registration** (`connectTopic` vs `registerContract`) — a producer or consumer startup only *resolves* the registry: it provisions the topic, checks reader compatibility, and looks up the registered schema id, failing when the declared contract is not registered. Registering a version or setting a subject's compatibility is the deployment lifecycle's job (Sol's `sol up`/`sol deploy` run the workspace's contract projection), so a runtime can never become the author of a producer's contract. Mirrors Sol's BUG-105 split: `Kafka_service.register` reads, `Schema.register_contract` writes.
+3. **Contract projection** (`contractProjection`/`runContractCli`) — the workspace's declared contracts are emitted as the language-neutral object Sol's deployment lifecycle consumes (BUG-105): `--json`, `--check`, `--apply`, byte-compatible with the generated OCaml `contract/contract.exe`. See *The contract projection* below.
+4. **Explicit topic provisioning** (`provisionTopic`, called by `connectTopic`) — provisions the topic via `admin().createTopics()` rather than relying on broker auto-create (invisible in local dev, fails hard in production with `auto.create.topics.enable=false`).
+5. **Confluent wire format** (`encodeWire`/`decodeWire`) — the 5-byte header (magic byte + big-endian schema ID), byte-for-byte compatible with Sol's OCaml `Confluent_wire`.
+6. **The `Ack | Fail` outcome and the decode DLQ** (`wrapEachMessage`/`wireCrashListener`) — a decode/validation failure is a rejection: counted, routed raw to the group DLQ, and committed once that publish lands. A handler `Fail` is fail-stop: the offset stays uncommitted and the consumer stops, mirroring `worker.ml`'s `| Fail -> ... Kafka.Consumer.Stop`. Matches FEAT-113, which deleted Kafka message-level retry from the OCaml framework.
+7. **W3C `traceparent` propagation** (`traceparentOf`/`extractTraceparent`) — OpenTelemetry has no official Kafka carrier, so this glue has to exist somewhere; correctly preserves an unsampled trace's flags byte (`0`) instead of coercing it to "sampled" via JS falsy-zero coercion.
 
 ## Declared partitioning and keys
 
@@ -30,10 +31,11 @@ const orders: TopicContract<OrderPlaced> = {
 };
 ```
 
-`registerTopic({ kafka, registryUrl, contract: orders })` provisions the topic at
+`connectTopic({ kafka, registryUrl, contract: orders })` provisions the topic at
 the declared count and refuses to reduce an existing topic below its live count
 (mirroring `Kafka_service.register`'s `Partition_count_reduction`, and the
-`Config` error for a count below 1). `publish(producer, registeredTopic, order)`
+`Config` error for a count below 1), then resolves the registered schema id
+read-only. `publish(producer, connectedTopic, order)`
 sends the record under the declared key, which is what keeps every record for one
 entity on one partition and therefore in order for one consumer — the property
 BUG-099 established on the OCaml side and this package now upholds for
@@ -42,6 +44,32 @@ TypeScript. `provisionDlqTopic` inherits the source topic's partition count
 so a record keeps its key → partition mapping when the DLQ takes it over, and a
 TypeScript worker can inherit the shape of a topic an OCaml service created
 without restating it.
+
+## The contract projection
+
+Sol's deployment lifecycle owns schema registration (BUG-105). A workspace
+declares each event once — `TopicContract` carries the schema, so nothing is
+duplicated into a manifest — and exposes it through a projection program that Sol
+runs. `contractProjection(events)` emits the same object the OCaml
+`Kafka_service.Contract.projection` does:
+
+```json
+{"version":1,"events":[{"module":"OrderPlaced","topic":"orders","partitions":3,"schema":"…"}]}
+```
+
+`runContractCli(events, argv)` is the program's `main`, with the same modes and
+output as the generated OCaml `contract/contract.exe`:
+
+- `--json` prints the projection object and exits 0 (offline; `sol plan` reads it).
+- `--check` is read-only: it reports each event's compatibility and never writes.
+- `--apply` is the only writer: for each event it sets the subject's
+  compatibility to `FULL` *then* registers the declared schema, both failures
+  fatal, and exits 1 if any registration failed. `sol up` and `sol deploy` run it.
+- no mode prints usage and exits 2.
+
+`--check`/`--apply` read `SCHEMA_REGISTRY_URL`; a missing value is an error, not a
+silent skip. Because the object is language-neutral, Sol drives an OCaml and a
+TypeScript workspace through the same code path.
 
 ## Non-goals
 
@@ -95,7 +123,7 @@ import {
   kafkaConfigFromEnv,
   publish,
   provisionDlqTopic,
-  registerTopic,
+  connectTopic,
   traceparentOf,
   wireCrashListener,
   wrapEachMessage,
@@ -113,7 +141,11 @@ const orders: TopicContract<OrderPlaced> = {
   key: (order) => order.order_id,
 };
 
-const topic = await registerTopic({ kafka, registryUrl: "http://localhost:8081", contract: orders });
+const topic = await connectTopic({ kafka, registryUrl: "http://localhost:8081", contract: orders });
+
+// The deployment's projection program (`sol` runs it; see the section above):
+//   import { runContractCli } from "@sol-fab/kafka";
+//   process.exit(await runContractCli([{ module: "OrderPlaced", contract: orders }]));
 
 // producer: wire-encoded with the registered schema id, keyed by the contract
 await publish(producer, topic, order, { headers: { traceparent: traceparentOf(span) } });
