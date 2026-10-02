@@ -24,6 +24,7 @@ export {
 } from "./register.js";
 export type {
   ConnectTopicOptions,
+  DeclaredContract,
   ProvisionTopicOptions,
   RegistryOptions,
   TopicContractOptions,

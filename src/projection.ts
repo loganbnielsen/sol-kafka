@@ -1,4 +1,4 @@
-import type { TopicContract } from "./contract.js";
+import type { DeclaredContract } from "./register.js";
 import { checkContract, registerContract } from "./register.js";
 
 /**
@@ -13,10 +13,10 @@ import { checkContract, registerContract } from "./register.js";
  * TypeScript entry point emit byte-comparable JSON, so Sol needs no
  * language-specific handling to consume either.
  */
-export interface NamedContract<T = unknown> {
+export interface NamedContract {
   /** The event's module label, as OCaml's `(string * (module MESSAGE))` carries. */
   readonly module: string;
-  readonly contract: TopicContract<T>;
+  readonly contract: DeclaredContract;
 }
 
 export interface ProjectedEvent {

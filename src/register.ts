@@ -1,5 +1,10 @@
 import type { Kafka } from "kafkajs";
-import { assertDeclaredPartitions, type RegisteredTopic, type TopicContract } from "./contract.js";
+import {
+  assertDeclaredPartitions,
+  type RegisteredTopic,
+  type TopicContract,
+  type TopicShape,
+} from "./contract.js";
 import { describeTopic } from "./admin.js";
 import {
   checkCompatibility,
@@ -34,9 +39,19 @@ export interface ProvisionTopicOptions<T> extends TopicContractOptions<T> {
   replicationFactor?: number;
 }
 
-export interface RegistryOptions<T = unknown> {
+/**
+ * The part of a declared contract the registry operations need: its topic
+ * shape and schema text. A `TopicContract<T>` satisfies it structurally, so the
+ * same functions serve a typed producer contract and a projection entry point
+ * that only carries the declaration.
+ */
+export interface DeclaredContract extends TopicShape {
+  readonly schema: string;
+}
+
+export interface RegistryOptions {
   registryUrl: string;
-  contract: TopicContract<T>;
+  contract: DeclaredContract;
 }
 
 /**
@@ -90,9 +105,7 @@ export async function provisionTopic<T>(opts: ProvisionTopicOptions<T>): Promise
  *     failure is the point: a producer whose schema was never reconciled must
  *     not start and invent a version at runtime.
  */
-export async function resolveContract<T = unknown>(
-  opts: RegistryOptions<T>,
-): Promise<{ schemaId: number }> {
+export async function resolveContract(opts: RegistryOptions): Promise<{ schemaId: number }> {
   const { compatible } = await checkCompatibility(
     opts.registryUrl,
     opts.contract.name,
@@ -135,16 +148,14 @@ export async function connectTopic<T>(opts: ConnectTopicOptions<T>): Promise<Reg
  *
  * Idempotent: registering an already-registered schema returns its existing id.
  */
-export async function registerContract<T = unknown>(
-  opts: RegistryOptions<T>,
-): Promise<{ schemaId: number }> {
+export async function registerContract(opts: RegistryOptions): Promise<{ schemaId: number }> {
   await setSubjectCompatibility(opts.registryUrl, opts.contract.name);
   const schemaId = await registerSchema(opts.registryUrl, opts.contract.name, opts.contract.schema);
   return { schemaId };
 }
 
 /** Read-only compatibility gate for `--check`, mirroring `Schema.check`. */
-export async function checkContract<T = unknown>(opts: RegistryOptions<T>): Promise<void> {
+export async function checkContract(opts: RegistryOptions): Promise<void> {
   const { compatible } = await checkCompatibility(
     opts.registryUrl,
     opts.contract.name,
