@@ -69,7 +69,7 @@ test("retry-topics: Retry forwards to <source>.<group>.retry with attempt/retry-
 
   assert.equal(calls, 1, "source path runs the handler once, then forwards");
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.fulfillment.retry");
+  assert.equal(records[0].topic, "orders.fulfillment-55364684d194.retry");
   assert.equal(records[0].headers[HDR_ATTEMPT], "1");
   assert.equal(records[0].headers[HDR_RETRY_AT], "1001"); // now + backoff(attempt 1) = 1s
   assert.equal(records[0].key?.toString(), "k", "the source key travels with the record");
@@ -91,7 +91,7 @@ test("retry-topics: Dead_letter forwards straight to <source>.<group>.dlq with o
   await wrapped(payload(encodeWire(1, { x: 1 })));
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.fulfillment.dlq");
+  assert.equal(records[0].topic, "orders.fulfillment-55364684d194.dlq");
   assert.equal(records[0].headers[HDR_ORIGIN_GROUP], "fulfillment");
   assert.equal(records[0].headers[HDR_RETRY_AT], "1000"); // dead letters are immediate
 });
@@ -111,7 +111,7 @@ test("retry-topics: maxAttempts=1 means no retry -- Retry goes straight to the D
 
   await wrapped(payload(encodeWire(1, { x: 1 })));
   assert.equal(records.length, 1);
-  assert.equal(records[0].topic, "orders.fulfillment.dlq");
+  assert.equal(records[0].topic, "orders.fulfillment-55364684d194.dlq");
   assert.equal(records[0].headers[HDR_ATTEMPT], "1");
 });
 
@@ -271,7 +271,7 @@ test("retry-topics default: an undecodable record is published raw to the DLQ be
   assert.equal(handlerCalled, false);
   assert.equal(records.length, 1);
   const [record] = records;
-  assert.equal(record.topic, "t.g.dlq");
+  assert.equal(record.topic, "t.g-b2f5ff474366.dlq");
   assert.deepEqual(record.value, value);
   assert.deepEqual(record.key, Buffer.from("k"));
   assert.match(record.headers[HDR_DECODE_ERROR] ?? "", /bad shape/);

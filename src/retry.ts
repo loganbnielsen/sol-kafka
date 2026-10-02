@@ -6,9 +6,9 @@
  *   - backoff:            framework/kafka-eio-service/lib/kafka_service_retry_topics.ml
  *                         (message_backoff_s) delegating to kafka-eio's
  *                         Kafka.Consumer.backoff_s (lib/kafka_consumer.ml:354)
- *   - topic naming:       kafka_service_retry_topics.ml `relay_topic_name` /
- *                         `canonical_group_segment` / `sanitize_group_id`
- *                         (BUG-030's group-scoping)
+ *   - topic naming:       kafka_service_dlq.ml `canonical_group_segment` /
+ *                         `sanitize_group_id` / `dlq_topic_name` (BUG-030's
+ *                         group-scoping, BUG-080's always-present hash)
  *   - record headers:     kafka_service_retry_topics.ml `retry_message` /
  *                         `dead_letter_message` / `retry_decode_failure_message`
  *
@@ -93,8 +93,11 @@ export function retryTopicsPolicyError(policy: RetryPolicy): string | undefined 
 // Group-scoped retry / DLQ topic naming (BUG-030)
 // ---------------------------------------------------------------------------
 
-/** kafka_service_retry_topics.ml `max_group_segment_len`. */
+/** kafka_service_dlq.ml `max_group_segment_len`. */
 export const MAX_GROUP_SEGMENT_LEN = 64;
+
+/** kafka_service_dlq.ml `group_hash_len` — the MD5 prefix every segment carries. */
+export const GROUP_HASH_LEN = 12;
 
 /** `sanitize_group_id`: alphanumerics and '-' only; empty becomes "unscoped". */
 export function sanitizeGroupId(groupId: string): string {
@@ -103,17 +106,18 @@ export function sanitizeGroupId(groupId: string): string {
 }
 
 /**
- * `canonical_group_segment`: over-length ids are truncated and given a short
- * MD5 content-hash suffix (first 8 hex chars of `Digest.string`, which is
- * MD5), always — not only on a detected collision — so two different overlong
- * ids can never truncate to the same segment.
+ * `canonical_group_segment` (kafka_service_dlq.ml:29-57): the sanitized id is
+ * **always** suffixed with `-` + the first 12 hex of `Digest.string` (MD5) of
+ * the *original* group id — on every id, not only a detected collision — so two
+ * different ids can never resolve to the same DLQ topic. The readable prefix is
+ * truncated only when it would push the segment past `MAX_GROUP_SEGMENT_LEN`.
  */
 export function canonicalGroupSegment(groupId: string): string {
   const sanitized = sanitizeGroupId(groupId);
-  if (sanitized.length <= MAX_GROUP_SEGMENT_LEN) return sanitized;
-  const hashSuffix = createHash("md5").update(groupId).digest("hex").slice(0, 8);
-  const prefixLen = MAX_GROUP_SEGMENT_LEN - hashSuffix.length - 1;
-  return `${sanitized.slice(0, prefixLen)}-${hashSuffix}`;
+  const hashSuffix = createHash("md5").update(groupId).digest("hex").slice(0, GROUP_HASH_LEN);
+  const prefixLen = MAX_GROUP_SEGMENT_LEN - GROUP_HASH_LEN - 1;
+  const prefix = sanitized.length <= prefixLen ? sanitized : sanitized.slice(0, prefixLen);
+  return `${prefix}-${hashSuffix}`;
 }
 
 /** `relay_topic_name`: `<source>.<canonical-group>.<retry|dlq>`. */

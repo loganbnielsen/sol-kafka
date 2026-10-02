@@ -22,8 +22,8 @@ import {
   type RetryPolicy,
 } from "../src/retry.js";
 
-// FEAT-081: parity with the OCaml retry/DLQ conventions
-// (framework/kafka-eio-service/lib/kafka_service_retry_topics.ml and
+// FEAT-081 / BUG-117: parity with the OCaml retry/DLQ conventions
+// (framework/kafka-eio-service/lib/kafka_service_dlq.ml and
 // kafka-eio's Kafka.Consumer.backoff_s). These assertions pin the exact
 // values the OCaml side produces, so a drift on either side fails here rather
 // than silently splitting retry/DLQ topics or header semantics between
@@ -39,21 +39,30 @@ test("sanitizeGroupId: alphanumerics and '-' survive; everything else becomes '-
   assert.equal(sanitizeGroupId("._."), "---");
 });
 
-test("canonicalGroupSegment: at/below the cap the sanitized id is used unchanged", () => {
-  assert.equal(canonicalGroupSegment("orders.worker"), "orders-worker");
-  const exactly64 = "x".repeat(MAX_GROUP_SEGMENT_LEN);
-  assert.equal(canonicalGroupSegment(exactly64), exactly64);
+test("canonicalGroupSegment: the sanitized id always carries the 12-hex MD5 of the original id", () => {
+  // Fixtures computed independently (python3 hashlib.md5), not by this code.
+  // kafka_service_dlq.ml's canonical_group_segment appends the hash on every
+  // id, not only an over-length one.
+  assert.equal(canonicalGroupSegment("orders.worker"), "orders-worker-33f9c2161734");
+  assert.equal(canonicalGroupSegment("payments"), "payments-84d5eaf713c9");
+  assert.equal(canonicalGroupSegment(""), "unscoped-d41d8cd98f00");
+  assert.equal(canonicalGroupSegment("a"), "a-0cc175b9c0f1");
 });
 
-test("canonicalGroupSegment: over-length ids truncate to 55 chars + '-' + first 8 hex of MD5", () => {
-  // Fixtures computed independently (python3 hashlib.md5), not by this code.
+test("canonicalGroupSegment: over-length ids truncate the readable prefix to 51 chars, keeping the full 12-hex hash", () => {
   assert.equal(
     canonicalGroupSegment("g".repeat(70)),
-    "g".repeat(55) + "-d63aff78",
+    "g".repeat(51) + "-d63aff782647",
   );
   assert.equal(
     canonicalGroupSegment("Group.One_" + "x".repeat(60)),
-    "Group-One-" + "x".repeat(45) + "-237aac25",
+    "Group-One-" + "x".repeat(41) + "-237aac254fe2",
+  );
+  // The cap is on the whole segment (64), so a 64-char id is truncated too:
+  // 51 readable characters plus '-' and the 12-hex hash is exactly 64.
+  assert.equal(
+    canonicalGroupSegment("x".repeat(MAX_GROUP_SEGMENT_LEN)),
+    "x".repeat(51) + "-c1bb4f81d892",
   );
   // Distinct overlong ids must never truncate to the same segment.
   const a = canonicalGroupSegment("a".repeat(64) + "1");
@@ -61,10 +70,17 @@ test("canonicalGroupSegment: over-length ids truncate to 55 chars + '-' + first 
   assert.notEqual(a, b);
 });
 
+test("canonicalGroupSegment: punctuation variants that sanitize alike stay distinct via the hash of the original id", () => {
+  const variants = ["pay.ments", "pay_ments", "pay-ments"];
+  const segments = variants.map(canonicalGroupSegment);
+  assert.equal(new Set(segments).size, variants.length);
+  assert.ok(segments.every((s) => s.startsWith("pay-ments-")));
+});
+
 test("relayTopicName / retryConsumerGroupId match the OCaml naming", () => {
-  assert.equal(relayTopicName("orders", "payments", "retry"), "orders.payments.retry");
-  assert.equal(relayTopicName("orders", "payments", "dlq"), "orders.payments.dlq");
-  assert.equal(relayTopicName("orders", "orders.worker", "retry"), "orders.orders-worker.retry");
+  assert.equal(relayTopicName("orders", "payments", "retry"), "orders.payments-84d5eaf713c9.retry");
+  assert.equal(relayTopicName("orders", "payments", "dlq"), "orders.payments-84d5eaf713c9.dlq");
+  assert.equal(relayTopicName("orders", "orders.worker", "retry"), "orders.orders-worker-33f9c2161734.retry");
   assert.equal(retryConsumerGroupId("payments"), "payments-sol-retry");
 });
 
