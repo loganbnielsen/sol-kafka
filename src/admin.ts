@@ -3,7 +3,7 @@
  *
  * The declaration says what a topic *should* be (see `contract.ts`); the broker
  * says what it *is*. Both matter: the declaration is checked against the live
- * topic so a remembered count can never shrink it, and the relay topics are
+ * topic so a remembered count can never shrink it, and the DLQ topic is
  * inherited from the live source topic so a TypeScript worker and an OCaml
  * service on the same topic provision the same shape.
  */

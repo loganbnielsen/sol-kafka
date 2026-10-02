@@ -13,49 +13,27 @@ export { registerTopic } from "./register.js";
 export type { RegisterTopicOptions } from "./register.js";
 export { publish } from "./publish.js";
 export type { PublishOptions } from "./publish.js";
-export { wrapEachMessage, wireCrashListener } from "./consume.js";
-export type { DecodeErrorCounter, MessageHandlerContext } from "./consume.js";
+export { wrapEachMessage, wireCrashListener, MessageFailError } from "./consume.js";
+export type {
+  CrashListenerOptions,
+  DecodeErrorCounter,
+  DecodeErrorPolicy,
+  EachMessageOptions,
+  MessageHandlerContext,
+} from "./consume.js";
 export { traceparentOf, extractTraceparent } from "@sol-fab/obs";
+export { ACK, fail } from "./outcome.js";
+export type { Outcome } from "./outcome.js";
 export {
-  DEFAULT_RETRY_POLICY,
-  HDR_ATTEMPT,
+  GROUP_HASH_LEN,
   HDR_DECODE_ERROR,
   HDR_ORIGIN_GROUP,
-  HDR_RETRY_AT,
   MAX_GROUP_SEGMENT_LEN,
-  backoffS,
   canonicalGroupSegment,
-  deadLetterHeaders,
-  decideAction,
-  epochSeconds,
-  parseAttemptHeader,
-  parseRetryAtHeader,
-  relayTopicName,
-  retryConsumerGroupId,
-  retryDecodeFailureHeaders,
-  retryRecordHeaders,
-  retryTopicsPolicyError,
+  decodeFailureHeaders,
+  dlqTopicName,
+  provisionDlqTopic,
   sanitizeGroupId,
   solHeadersOf,
-} from "./retry.js";
-export type {
-  RetryAction,
-  RetryPolicy,
-  RetryRecordOptions,
-  RetryStrategy,
-  Rng,
-  SolHeaders,
-} from "./retry.js";
-export { ACK, deadLetter, retry } from "./outcome.js";
-export type { Outcome } from "./outcome.js";
-export { wrapEachRetryableMessage, type DecodeErrorPolicy } from "./retryable.js";
-export type { RetryableMessageOptions } from "./retryable.js";
-export type { RawRecord, RelayRecord, RetryMetrics, RetryRelay } from "./routing.js";
-export type { RetryRelayProcessorOptions } from "./relay.js";
-export {
-  handleRetryRecord,
-  kafkaRetryRelay,
-  provisionRelayTopics,
-  runRetryRelayConsumer,
-} from "./relay.js";
-export type { ProvisionRelayTopicsOptions, RetryRelayConsumerOptions } from "./relay.js";
+} from "./dlq.js";
+export type { DlqPublisher, DlqRecord, ProvisionDlqTopicOptions, SolHeaders } from "./dlq.js";

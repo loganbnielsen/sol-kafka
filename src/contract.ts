@@ -16,7 +16,7 @@
  * The part of a topic that both a producer and a consumer need to agree on: its
  * name and the partition count it is created with. A full {@link TopicContract}
  * satisfies this structurally, so a producer can hand its contract to the
- * consumer-side relay provisioning without restating the count.
+ * consumer-side DLQ provisioning without restating the count.
  */
 export interface TopicShape {
   /** The Kafka topic name. */
