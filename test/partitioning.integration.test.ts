@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Kafka, type Consumer } from "kafkajs";
 import { registerTopic } from "../src/register.js";
 import { publish } from "../src/publish.js";
-import { provisionRelayTopics } from "../src/relay.js";
+import { provisionDlqTopic } from "../src/dlq.js";
 import { describeTopic } from "../src/admin.js";
 import { decodeWire } from "../src/wireFormat.js";
 import type { TopicContract } from "../src/contract.js";
@@ -76,10 +76,9 @@ it("integration: a declared multi-partition topic keeps same-key records ordered
   const live = await describeTopic(kafka, topicName);
   assert.equal(live?.partitions, DECLARED_PARTITIONS, "the topic was created at the declared count");
 
-  // The relay topics inherit the source's count, so a transferred record keeps
+  // The group DLQ inherits the source's count, so a transferred record keeps
   // its key -> partition mapping.
-  const { retryTopic, dlqTopic } = await provisionRelayTopics({ kafka, groupId, source: topic });
-  assert.equal((await describeTopic(kafka, retryTopic))?.partitions, DECLARED_PARTITIONS);
+  const dlqTopic = await provisionDlqTopic({ kafka, groupId, source: topic });
   assert.equal((await describeTopic(kafka, dlqTopic))?.partitions, DECLARED_PARTITIONS);
 
   const producer = kafka.producer();

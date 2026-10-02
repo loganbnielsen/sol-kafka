@@ -12,7 +12,7 @@ Encodes six conventions that a hand-rolled TypeScript port of Sol's `local-demo`
 2. **Schema registration ordering/fatality** (`registerTopic`) — register the schema first (fatal on failure), then set subject compatibility second (non-fatal, logged as a warning). Matches Sol's OCaml `kafka_service.ml` `register` exactly.
 3. **Explicit topic provisioning** (`registerTopic`) — provisions the topic via `admin().createTopics()` *before* touching the schema registry, rather than relying on broker auto-create (invisible in local dev, fails hard in production with `auto.create.topics.enable=false`).
 4. **Confluent wire format** (`encodeWire`/`decodeWire`) — the 5-byte header (magic byte + big-endian schema ID), byte-for-byte compatible with Sol's OCaml `Confluent_wire`.
-5. **Decode/retry/crash routing** (`wrapEachMessage`/`wireCrashListener`) — a decode/validation failure is a rejection (counted, never retried, handler never runs); a downstream handler failure (e.g. a DB error) is retried by `kafkajs`; the process only exits when `kafkajs` itself has given up (`payload.restart === false`), not on every crash it was already self-healing from.
+5. **The `Ack | Fail` outcome and the decode DLQ** (`wrapEachMessage`/`wireCrashListener`) — a decode/validation failure is a rejection: counted, routed raw to the group DLQ, and committed once that publish lands. A handler `Fail` is fail-stop: the offset stays uncommitted and the consumer stops, mirroring `worker.ml`'s `| Fail -> ... Kafka.Consumer.Stop`. Matches FEAT-113, which deleted Kafka message-level retry from the OCaml framework.
 6. **W3C `traceparent` propagation** (`traceparentOf`/`extractTraceparent`) — OpenTelemetry has no official Kafka carrier, so this glue has to exist somewhere; correctly preserves an unsampled trace's flags byte (`0`) instead of coercing it to "sampled" via JS falsy-zero coercion.
 
 ## Declared partitioning and keys
@@ -37,53 +37,69 @@ the declared count and refuses to reduce an existing topic below its live count
 sends the record under the declared key, which is what keeps every record for one
 entity on one partition and therefore in order for one consumer — the property
 BUG-099 established on the OCaml side and this package now upholds for
-TypeScript. `provisionRelayTopics` inherits the source topic's partition count
+TypeScript. `provisionDlqTopic` inherits the source topic's partition count
 (read from the broker, falling back to the declaration before the source exists),
-so a record keeps its key → partition mapping when a retry or DLQ topic takes it
-over, and a TypeScript worker can inherit the shape of a topic an OCaml service
-created without restating it.
+so a record keeps its key → partition mapping when the DLQ takes it over, and a
+TypeScript worker can inherit the shape of a topic an OCaml service created
+without restating it.
 
 ## Non-goals
 
 - Not a general-purpose Kafka framework. `kafkajs` remains the transport — this package never wraps or hides it.
 - Not a reimplementation of the Confluent Schema Registry HTTP client beyond what Sol's own policy needs.
 - `traceparentOf`/`extractTraceparent` are re-exported from [`@sol-fab/obs`](https://github.com/loganbnielsen/sol-obs), which owns the tracing primitives. This package carries no second copy.
+- Not a retry mechanism. FEAT-113 removed Kafka message-level retry from Sol on both sides; independently retryable work belongs in a durable Postgres job queue, not the topic.
 
-## Retry / DLQ record conventions
+## The `Ack | Fail` outcome and the decode DLQ
 
-`retry.ts` owns Sol's retry policy and on-the-wire record shape, matching the
-OCaml worker side exactly rather than approximating it:
+The outcome vocabulary is exactly `Ack | Fail` (`outcome.ts`), matching
+`worker.ml`:
 
-- `RetryPolicy` + `backoffS` — mirrors kafka-eio's `Kafka.Consumer.backoff_s`
-  (exponential, symmetric jitter applied before the `maxDelayS` clamp; an
-  injectable RNG for deterministic tests).
-- `relayTopicName` / `canonicalGroupSegment` — `<source>.<canonical-group>.retry|dlq`,
-  the group-scoping rule (sanitize to `[a-zA-Z0-9-]`, truncate the readable
-  prefix past 51 chars, and always append the 12-hex MD5 of the original group
-  id).
-- `retryRecordHeaders` / `deadLetterHeaders` / `retryDecodeFailureHeaders` —
-  the `X-Sol-Attempt` / `X-Sol-Retry-At` / `X-Sol-Decode-Error` /
-  `X-Sol-Origin-Group` conventions.
-- `decideAction` — retry-topic vs DLQ routing at the retry budget boundary.
+- `ACK` — the offset commits.
+- `fail(reason)` — fail-stop. `wrapEachMessage` throws a `MessageFailError`, so
+  the offset is never committed, and `wireCrashListener` stops the consumer and
+  exits 0, mirroring `| Fail -> ... Kafka.Consumer.Stop` (OCaml's `run` then
+  returns `Ok ()`). The reason is diagnostic text only; the runtime never
+  inspects it to decide routing or retryability.
+- Any other crash still exits only when `kafkajs` itself has given up
+  (`payload.restart === false`), not on every crash it was already self-healing
+  from.
 
-The consumer side (`Ack`/`Retry`/`Dead_letter` outcome, in-memory vs
-retry-topics strategies) is built on these primitives and has parity with the
-OCaml worker's retry/DLQ semantics.
+`dlq.ts` owns the group-scoped dead-letter queue, byte-compatible with
+`kafka_service_dlq.ml`:
+
+- `dlqTopicName` / `canonicalGroupSegment` / `sanitizeGroupId` —
+  `<source>.<canonical-group>.dlq`, the group-scoping rule (sanitize to
+  `[a-zA-Z0-9-]`, truncate the readable prefix past 51 chars, and always append
+  the 12-hex MD5 of the original group id — BUG-117).
+- `decodeFailureHeaders` — the `X-Sol-Decode-Error` / `X-Sol-Origin-Group`
+  provenance headers, with the original record's headers preserved.
+- `provisionDlqTopic` — creates the DLQ topic at the source's partition count.
 
 **Undecodable source records** (`decodeErrorPolicy`, parity with OCaml's
-`decode_error_policy`). Under `retry-topics` the default is `"route-to-dlq"`: a
-record that cannot be decoded is published, raw (value, key, original headers),
-with `X-Sol-Decode-Error` and `X-Sol-Origin-Group`, to `<source>.<group>.dlq`. Its
-offset commits only once that publish lands, and a failed publish throws so it
-stays uncommitted. `"ack-and-drop"` is the explicit opt-in to count it and commit
-past it. `in-memory` has no DLQ, so it only allows `"ack-and-drop"` (its default),
-and asking it for `"route-to-dlq"` is a construction error.
+`decode_error_policy`). The default when a `dlq` is configured is
+`"route-to-dlq"`: a record that cannot be decoded is published, raw (value, key,
+original headers), with `X-Sol-Decode-Error` and `X-Sol-Origin-Group`, to
+`<source>.<group>.dlq`. Its offset commits only once that publish lands, and a
+failed publish throws so it stays uncommitted. `"ack-and-drop"` is the explicit
+opt-in to count it and commit past it, for a consumer with no DLQ; asking for
+`"route-to-dlq"` without a `dlq` is a construction error.
 
 ## Usage
 
 ```ts
 import { Kafka } from "kafkajs";
-import { kafkaConfigFromEnv, registerTopic, publish, wrapEachMessage, wireCrashListener, traceparentOf } from "@sol-fab/kafka";
+import {
+  ACK,
+  fail,
+  kafkaConfigFromEnv,
+  publish,
+  provisionDlqTopic,
+  registerTopic,
+  traceparentOf,
+  wireCrashListener,
+  wrapEachMessage,
+} from "@sol-fab/kafka";
 import type { TopicContract } from "@sol-fab/kafka";
 
 // Reads KAFKA_BROKERS and KAFKA_SECURITY_PROTOCOL (required) plus the TLS/SASL
@@ -103,12 +119,23 @@ const topic = await registerTopic({ kafka, registryUrl: "http://localhost:8081",
 await publish(producer, topic, order, { headers: { traceparent: traceparentOf(span) } });
 
 // consumer
+const groupId = "fulfillment-worker";
+await provisionDlqTopic({ kafka, groupId, source: orders });
 const decodeErrorsTotal = /* your Prometheus counter */;
 await consumer.run({
   eachMessage: wrapEachMessage({
     decode: (json) => validateOrder(json), // throw to reject
     decodeErrorCounter: decodeErrorsTotal,
-    handler: async ({ message, traceContext }) => { /* ... */ },
+    dlq: {
+      publisher: { publish: (record) => producer.send({ topic: record.topic, messages: [record] }) },
+      groupId,
+      sourceTopic: orders.name,
+    },
+    handler: async ({ message, traceContext }) => {
+      if (!canFulfil(message)) return fail("inventory service unavailable");
+      await fulfil(message, traceContext);
+      return ACK;
+    },
   }),
 });
 wireCrashListener(consumer);
@@ -141,8 +168,7 @@ npm run build
 npm test          # unit tests; broker-backed tests self-skip
 ```
 
-Broker-backed retry/DLQ and partitioning tests need a real broker; the
-multi-partition ordering test additionally needs a schema registry:
+Broker-backed partitioning tests need a real broker and a schema registry:
 
 ```bash
 KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_URL=http://localhost:8081 npm test

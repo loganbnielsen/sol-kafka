@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { publish } from "../src/publish.js";
-import { provisionRelayTopics } from "../src/relay.js";
+import { provisionDlqTopic } from "../src/dlq.js";
 import { decodeWire } from "../src/wireFormat.js";
 import type { RegisteredTopic } from "../src/contract.js";
 import { fakeKafka, fakeProducer } from "./fakes.js";
 
 // FEAT-117: the declared contract's two halves. The topic is created at the
-// declared count and its relays inherit that count; every published record is
+// declared count and its DLQ inherits that count; every published record is
 // keyed by the declared key, which is what keeps one entity's records ordered
 // on a multi-partition topic (BUG-099).
 
@@ -55,37 +55,36 @@ test("publish: an undefined declared key publishes unkeyed", async () => {
   assert.equal("key" in (sent[0]?.messages[0] as object), false);
 });
 
-test("provisionRelayTopics: the relay topics inherit the source topic's live partition count", async () => {
+test("provisionDlqTopic: the DLQ inherits the source topic's live partition count", async () => {
   const { kafka, created } = fakeKafka({ livePartitions: 6 });
 
-  const { retryTopic, dlqTopic } = await provisionRelayTopics({
+  const dlqTopic = await provisionDlqTopic({
     kafka,
     groupId: "g",
     source: { name: "orders", partitions: 3 },
   });
 
-  assert.equal(retryTopic, "orders.g-b2f5ff474366.retry");
   assert.equal(dlqTopic, "orders.g-b2f5ff474366.dlq");
   assert.deepEqual(
     created.map((t) => t.numPartitions),
-    [6, 6],
+    [6],
     "the live source count wins over the declaration",
   );
 });
 
-test("provisionRelayTopics: before the source exists, the declared count is used", async () => {
+test("provisionDlqTopic: before the source exists, the declared count is used", async () => {
   const { kafka, created } = fakeKafka();
 
-  await provisionRelayTopics({ kafka, groupId: "g", source: { name: "orders", partitions: 4 } });
+  await provisionDlqTopic({ kafka, groupId: "g", source: { name: "orders", partitions: 4 } });
 
-  assert.deepEqual(created.map((t) => t.numPartitions), [4, 4]);
+  assert.deepEqual(created.map((t) => t.numPartitions), [4]);
 });
 
-test("provisionRelayTopics: a declared count below one is rejected before any broker call", async () => {
+test("provisionDlqTopic: a declared count below one is rejected before any broker call", async () => {
   const { kafka, calls } = fakeKafka();
 
   await assert.rejects(
-    () => provisionRelayTopics({ kafka, groupId: "g", source: { name: "orders", partitions: 0 } }),
+    () => provisionDlqTopic({ kafka, groupId: "g", source: { name: "orders", partitions: 0 } }),
     /a topic has at least one/,
   );
   assert.deepEqual(calls, []);
