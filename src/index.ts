@@ -5,12 +5,37 @@ export type {
   KafkaSaslMechanism,
   KafkaSecurityProtocol,
 } from "./config.js";
-export { registerSchema, setSubjectCompatibility, checkCompatibility } from "./schemaRegistry.js";
+export {
+  registerSchema,
+  setSubjectCompatibility,
+  checkCompatibility,
+  lookupSchema,
+  isSubjectNotFound,
+} from "./schemaRegistry.js";
 export type { TopicShape, TopicContract, RegisteredTopic } from "./contract.js";
 export { describeTopic } from "./admin.js";
 export type { ObservedTopic } from "./admin.js";
-export { registerTopic } from "./register.js";
-export type { RegisterTopicOptions } from "./register.js";
+export {
+  checkContract,
+  connectTopic,
+  provisionTopic,
+  registerContract,
+  resolveContract,
+} from "./register.js";
+export type {
+  ConnectTopicOptions,
+  ProvisionTopicOptions,
+  RegistryOptions,
+  TopicContractOptions,
+} from "./register.js";
+export { contractProjection, runContractCli } from "./projection.js";
+export type {
+  ContractCliOptions,
+  ContractMode,
+  ContractProjection,
+  NamedContract,
+  ProjectedEvent,
+} from "./projection.js";
 export { publish } from "./publish.js";
 export type { PublishOptions } from "./publish.js";
 export { wrapEachMessage, wireCrashListener, MessageFailError } from "./consume.js";
